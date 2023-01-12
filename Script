@@ -1,0 +1,68 @@
+## MicrosatelliteHeatmap
+
+# 1. Splitting read
+
+samtools faidx caf581d7-cd79-4845-a20c-5b05bc9e9dff_fasta
+bedtools makewindows -g caf581d7-cd79-4845-a20c-5b05bc9e9dff_fasta.fai -w 5000 | bedtools getfasta -fi caf581d7-cd79-4845-a20c-5b05bc9e9dff_fasta -bed - > split5000.fasta
+perl -i -pe's/caf581d7-cd79-4845-a20c-5b05bc9e9dff:/split_/' split5000.fasta
+grep ">" split5000.fasta |sed 's/\>//' > split_id
+
+
+# 2. Mapping with Winnowmap2 v2.03
+
+for i in `cat split_id`; do echo $i; \
+    grep $i -A1 split5000.fasta > $i".fasta"; \
+    meryl count k=15 output merylDB_split $i".fasta"; \
+    meryl print greater-than distinct=0.9998 merylDB_split > split_repetitive_k15.txt; \
+    winnowmap -W split_repetitive_k15.txt --eqx -c -x map-ont $i".fasta" split5000.fasta >> all_split.paf; \
+    rm -r $i".fasta" merylDB_split split_repetitive_k15.txt; \ 
+    done
+
+# Note: $6: chromosome; $1: readID; $10: the number of sequence matches; $11: the total number of sequence matches, mismatches, insertions and deletions
+
+gunzip -c all_split.paf.gz| awk 'OFS="\t" {print $6,$1,$10,$11}' |gzip --best > all_split_short.paf.gz
+
+
+# 3. Plotting with R
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(svglite)
+
+all_split <- read.table("all_split_short.paf.gz")
+all_split <- all_split %>% group_by(V1,V2) %>% mutate(V3_keep=ifelse(V3 == max(V3), "yes", "no")) %>% data.frame() # label alignment(s) with the most matches in multiple alignments between the two sequence fragments
+all_split <- subset(all_split, V3_keep=="yes") # keep alignment(s) with the most matches in multiple alignments between two sequence fragments
+all_split_unique <- unique(all_split) # deduplicate multiple alignments with the most matches
+
+all_split_unique <- all_split_unique %>% group_by(V1,V2) %>% mutate(V4_keep=ifelse(V4 == min(V4), "yes", "no")) %>% data.frame() # label alignment with the highest identity
+all_split_unique <- subset(all_split_unique, V4_keep=="yes") # keep the most representative alignment (defined as the one with most matches and highest sequence identity)
+
+all_split_unique$identity <- all_split_unique$V3 / all_split_unique$V4 * 100
+all_split_identity <- all_split_unique[,c("V1","V2","identity")]
+names(all_split_identity) <- c("x","y","identity")
+all_split_identity$x <- factor(all_split_identity$x, levels=unique(all_split_identity$x))
+all_split_identity$y <- factor(all_split_identity$y, levels=unique(all_split_identity$x))
+
+ggplot(all_split_identity) +
+  geom_tile(aes(x=x, y=y, fill=identity)) +
+  theme_bw(base_family = "Helvetica") + 
+  coord_fixed(ratio = 1) + 
+  theme(axis.text.x = element_text(size = 18, family = "Helvetica", color = "black", hjust = 0.21), axis.text.y= element_blank()) + 
+  theme(axis.ticks=element_line(colour="black"), axis.ticks.length=unit(0.2, "cm"), axis.ticks.x=element_line(size=0.5, lineend="square"), axis.ticks.y=element_blank()) + 
+  scale_x_discrete(expand = c(0,0), breaks=c("split_0-5000","split_1730000-1731088"), labels=c("0","1.7 Mb")) +
+  scale_y_discrete(expand = c(0,0)) +
+  labs(x="caf581d7-cd79-4845-a20c-5b05bc9e9dff", y="caf581d7-cd79-4845-a20c-5b05bc9e9dff") + 
+  ggtitle(label = "") + 
+  theme(axis.title.x = element_text(color= "black", size=18, family = "Helvetica",hjust=0.5)) + 
+  theme(axis.title.y = element_text(color= "black", size=18, family = "Helvetica")) +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.x = element_blank(), panel.border=element_rect(colour="black", size=1)) + 
+  theme(strip.background =element_rect(fill="#bf77a9", colour="#bf77a9", size=1)) + 
+  theme(strip.text.y = element_text(size=16, colour = "white")) + 
+  theme(legend.title = element_text(size = 18, color= "black"), legend.text = element_text(size = 16, color= "black")) +
+  theme(legend.position = "top") +
+  theme(plot.title=element_text(colour="black", size=21, hjust=0.5, vjust=2), plot.subtitle=element_text(colour="black", size=21, hjust=0.5, vjust=2)) +
+  scale_fill_gradientn(colours=c("#F1ED62", "#9F9F48", "#87338D", "#B56BA5","white"), limits=c(92,100), breaks=seq(92,100,by=2), guide = guide_colorbar(raster = FALSE, barwidth = 21, barheight = 1, nbin=100, draw.ulim = T, draw.llim = T, reverse=F, frame.colour="black", ticks=T, ticks.linewidth=0.5, ticks.colour="black", title="% Identity", title.position="top", title.vjust=0.5, title.hjust=0.5)) +
+  theme(plot.margin=unit(c(1,4,1,1),'lines'))
+
+  ggsave("MicrosatelliteHeatmap.svg", width=5.6, height=6.8)
