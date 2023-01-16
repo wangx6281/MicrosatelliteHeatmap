@@ -20,7 +20,7 @@ for i in `cat split_id`; do echo $i; \
 
 # Note: $6: chromosome; $1: readID; $10: the number of sequence matches; $11: the total number of sequence matches, mismatches, insertions and deletions
 
-gunzip -c all_split.paf.gz| awk 'OFS="\t" {print $6,$1,$10,$11}' |gzip --best > all_split_short.paf.gz
+awk 'OFS="\t" {print $6,$1,$10,$11}' all_split.paf | gzip --best > all_split_short.paf.gz
 
 
 # 3. Plotting with R
